@@ -89,7 +89,7 @@ class Discord(plugins.Plugin):
                                 }
                             ],
                             'footer': {
-                                'text': f'Pwnagotchi v{pwnagotchi.version} - Discord Plugin v{self.__version__}'
+                                'text': f'Pwnagotchi v{pwnagotchi.__version__} - Discord Plugin v{self.__version__}'
                             },
                             'image': {
                                 'url': 'attachment://pwnagotchi.png'
