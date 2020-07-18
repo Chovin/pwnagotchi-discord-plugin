@@ -1,6 +1,8 @@
 import logging
 import requests
+from requests import HTTPError
 import json
+import os
 
 import pwnagotchi
 import pwnagotchi.ui.faces as faces
@@ -22,6 +24,20 @@ from pwnagotchi.utils import save_config
 
 # counter on screen how many blind epochs, internet conenctivity icon?
 
+DATA_FILE = '/var/tmp/pwnagotchi/discord_webhooks_temp.json'
+
+def read_json(filename):
+    with open(filename, encoding='utf-8', mode="r") as f:
+        data = json.load(f)
+    return data
+
+def save_json(filename, data):
+    with open(filename, encoding='utf-8', mode="w") as f:
+        json.dump(data, f, indent=4, sort_keys=True,
+            separators=(',', ' : '))
+    return data
+
+
 class Discord(plugins.Plugin):
     __author__ = 'charagarlnad'
     __version__ = '1.1.0'
@@ -32,6 +48,10 @@ class Discord(plugins.Plugin):
         self.ready = False
 
     def on_loaded(self):
+        if not os.path.exists(DATA_FILE):
+            # dict so we can add to it lateer if needed
+            save_json(DATA_FILE, {'failed_webhooks': {}})
+
         logging.info('Discord plugin loaded.')
 
     def on_ready(self, agent):
@@ -75,74 +95,98 @@ class Discord(plugins.Plugin):
             display.update(force=True)
             display.image().save(picture, 'png')
 
-            logging.info('Sending Discord webhook...')
-            display.set('status', 'Sending Discord webhook...')
+            logging.info('Sending Discord webhooks...')
+            display.set('status', 'Sending Discord webhooks...')
             display.update(force=True)
 
-            try:
-                data = {
-                    'embeds': [
-                        {
-                            'title': 'Pwnagotchi Status',
-                            'color': 3553599,
-                            'description': 'New Pwnagotchi status update available! Here\'s some stats from the last session:',
-                            'url': f'https://pwnagotchi.ai/pwnfile/#!{agent.fingerprint()}',
-                            'fields': [
-                                {
-                                    'name': 'Uptime',
-                                    'value': last_session.duration,
-                                    'inline': True
-                                },
-                                {
-                                    'name': 'Epochs',
-                                    'value': last_session.epochs,
-                                    'inline': True
-                                },
-                                {
-                                    'name': 'Average Reward',
-                                    'value': str(last_session.avg_reward),
-                                    'inline': True
-                                },
-                                {
-                                    'name': 'Deauths',
-                                    'value': last_session.deauthed,
-                                    'inline': True
-                                },
-                                {
-                                    'name': 'Associations',
-                                    'value': last_session.associated,
-                                    'inline': True
-                                },
-                                {
-                                    'name': 'Handshakes',
-                                    'value': last_session.handshakes,
-                                    'inline': True
-                                }
-                            ],
-                            'footer': {
-                                'text': f'Pwnagotchi v{pwnagotchi.version} - Discord Plugin v{self.__version__}'
+            data = {
+                'embeds': [
+                    {
+                        'title': 'Pwnagotchi Status',
+                        'color': 3553599,
+                        'description': 'New Pwnagotchi status update available! Here\'s some stats from the last session:',
+                        'url': f'https://pwnagotchi.ai/pwnfile/#!{agent.fingerprint()}',
+                        'fields': [
+                            {
+                                'name': 'Uptime',
+                                'value': last_session.duration,
+                                'inline': True
                             },
-                            'image': {
-                                'url': 'attachment://pwnagotchi.png'
+                            {
+                                'name': 'Epochs',
+                                'value': last_session.epochs,
+                                'inline': True
+                            },
+                            {
+                                'name': 'Average Reward',
+                                'value': str(last_session.avg_reward),
+                                'inline': True
+                            },
+                            {
+                                'name': 'Deauths',
+                                'value': last_session.deauthed,
+                                'inline': True
+                            },
+                            {
+                                'name': 'Associations',
+                                'value': last_session.associated,
+                                'inline': True
+                            },
+                            {
+                                'name': 'Handshakes',
+                                'value': last_session.handshakes,
+                                'inline': True
                             }
+                        ],
+                        'footer': {
+                            'text': f'Pwnagotchi v{pwnagotchi.version} - Discord Plugin v{self.__version__}'
+                        },
+                        'image': {
+                            'url': 'attachment://pwnagotchi.png'
                         }
-                    ]
-                }
+                    }
+                ]
+            }
 
-                with open(picture,'rb') as image:
-                    requests.post(self.options['webhook_url'], files={'image': image, 'payload_json': (None, json.dumps(data))})
+            webhooks = set(self.options['webhook_urls'])
 
+            # check for webhooks that didn't get sent
+            temp_data = read_json(DATA_FILE)
+            previously_failed_webhooks = temp_data['failed_webhooks']
+            
+            # remove webhooks no longer in config
+            valid_failed_webhooks = set(previously_failed_webhooks) & webhooks
+
+            # send failed ones only -- until they're all successful
+            if valid_failed_webhooks:
+                webhooks = valid_failed_webhooks
+
+            failed = {}
+            for webhook in webhooks:
+                try:
+                    with open(picture, 'rb') as image:
+                        r = requests.post(webhook, files={'image': image, 'payload_json': (None, json.dumps(data))})
+                    if not r.ok:
+                        raise HTTPError(r.status_code)
+                except Exception as e:
+                    # count failures for later maybe
+                    failed[webhook] = previously_failed_webhooks.get(webhook, 0) + 1
+            
+            temp_data['failed_webhooks'] = failed
+            save_json(DATA_FILE, temp_data)
+
+            if not failed:
                 # This kinda sucks as the saved session ID is global for all plugins, and was added to core only for the twitter plugin
                 # So the Discord plugin as of now is incompatable with the Twitter plugin
                 # If the session saving could be modified to either be unique for every plugin or each plugin has to implement it itself it should be better
                 # I might just implement it myself tbh if it doesn't get changed and someone wants to use twitter plugin at the same time
                 last_session.save_session_id()
 
-                logging.info('Webhook sent!')
-                display.set('status', 'Webhook sent!')
+                logging.info(f'All {len(webhooks)} webhooks sent!')
+                display.set('status', 'Webhooks sent!')
                 display.update(force=True)
-            except Exception as e:
-                logging.exception('An error occured in the Discord plugin.')
+            else:
+                logging.exception(f'{len(failed)} webhooks failed to send in the Discord plugin.')
                 display.set('face', faces.BROKEN)
                 display.set('status', 'An error occured in the Discord plugin.')
                 display.update(force=True)
