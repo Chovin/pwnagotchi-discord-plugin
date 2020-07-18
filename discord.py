@@ -27,10 +27,40 @@ class Discord(plugins.Plugin):
     __license__ = 'GPL3'
     __description__ = 'Sends Pwnagotchi status webhooks to Discord.'
 
+    def __init__(self):
+        self.ready = False
+
     def on_loaded(self):
         logging.info('Discord plugin loaded.')
 
+    def on_ready(self, agent):
+        self._ensure_up_to_date_configs(agent.config())
+        self.ready = True
+
+    def _ensure_up_to_date_configs(self, config):
+        """migrates old configs if needed"""
+
+        discord = config['main']['plugins']['discord']
+
+        # single -> multi-webhook upgrade
+        if 'webhook_url' in discord:
+            webhook = discord['webhook_url']
+
+            new_field = []
+            if webhook:
+                new_field.append(webhook)
+            
+            discord['webhook_urls'] = new_field
+            del discord['webhook_url']
+
+            # updates self.options, so no need to restart
+            save_config(config, '/etc/pwnagotchi/config.toml')
+            logging.info('[discord] config upgraded to multi-webhooks')
+
     def on_internet_available(self, agent):
+        if not self.ready:
+            return
+
         display = agent.view()
         last_session = agent.last_session
 
