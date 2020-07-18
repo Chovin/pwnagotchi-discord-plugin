@@ -5,6 +5,7 @@ import json
 import pwnagotchi
 import pwnagotchi.ui.faces as faces
 import pwnagotchi.plugins as plugins
+from pwnagotchi.utils import save_config
 
 # Installing:
 # Move plugin file to /usr/local/pwnagotchi/plugins
